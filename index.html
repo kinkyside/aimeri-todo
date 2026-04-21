@@ -757,7 +757,7 @@ async function deleteTaskDb(id) {
 
 function localToDb(t) {
   return {
-    id:         t.id.startsWith('task_') ? undefined : t.id,
+    id:         t.id.startsWith('task_') ? crypto.randomUUID() : t.id,
     user_id:    currentUser.id,
     title:      t.title,
     body:       t.body,
