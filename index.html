@@ -500,7 +500,7 @@
 <!-- ═══════════════════════════════════════════════════════════
      APP SCREEN
 ════════════════════════════════════════════════════════════ -->
-<div id="appScreen" class="visible">
+<div id="appScreen">
 
   <header>
     <div class="logo-wrap">
@@ -687,16 +687,21 @@ function friendlyError(msg) {
 }
 
 // ─── Auth state listener ──────────────────────────────────
+let _sessionLoaded = false;
 sb.auth.onAuthStateChange(async (event, session) => {
   if (session?.user) {
     currentUser = session.user;
     document.getElementById('userEmail').textContent = currentUser.email;
     document.getElementById('authScreen').style.display = 'none';
     document.getElementById('appScreen').classList.add('visible');
-    await loadTasks();
-    // migrate localStorage tasks on first login
-    await migrateLocalStorage();
+    // Only load tasks on first session or explicit sign-in, not on silent token refresh
+    if (!_sessionLoaded || event === 'SIGNED_IN' || event === 'SIGNED_UP') {
+      _sessionLoaded = true;
+      await loadTasks();
+      await migrateLocalStorage();
+    }
   } else {
+    _sessionLoaded = false;
     currentUser = null;
     document.getElementById('authScreen').style.display = 'flex';
     document.getElementById('appScreen').classList.remove('visible');
@@ -725,7 +730,7 @@ async function loadTasks() {
     .select('*')
     .order('created_at', { ascending: true });
 
-  if (error) { setSyncDot('error'); showToast('Erreur de chargement : ' + error.message); return; }
+  if (error) { setSyncDot('error'); showToast('Erreur de chargement : ' + error.message); renderAll(); return; }
 
   tasks = (data || []).map(dbToLocal);
   setSyncDot('ok');
