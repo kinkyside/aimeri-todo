@@ -500,7 +500,7 @@
 <!-- ═══════════════════════════════════════════════════════════
      APP SCREEN
 ════════════════════════════════════════════════════════════ -->
-<div id="appScreen" class="visible">
+<div id="appScreen">
 
   <header>
     <div class="logo-wrap">
@@ -664,13 +664,12 @@ async function doSignup() {
   const { error } = await sb.auth.signUp({ email, password: pwd });
   setAuthLoading('signupBtn', false);
   if (error) showAuthError(friendlyError(error.message));
-  else showAuthSuccess('✅ Compte créé ! Vérifie ta boîte mail pour confirmer ton adresse, puis connecte-toi.');
 }
 
 async function doMagicLink() {
   const email = document.getElementById('loginEmail').value.trim();
   if (!email) { showAuthError('Entre ton email d\'abord.'); return; }
-  const { error } = await sb.auth.signInWithOtp({ email });
+  const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: 'https://microeconomie.github.io/aimeri-todo/' } });
   if (error) showAuthError(friendlyError(error.message));
   else showAuthSuccess('✉️ Lien magique envoyé ! Vérifie ta boîte mail.');
 }
@@ -681,29 +680,55 @@ async function doLogout() {
 
 function friendlyError(msg) {
   if (msg.includes('Invalid login'))      return 'Email ou mot de passe incorrect.';
-  if (msg.includes('Email not confirmed')) return 'Confirme d\'abord ton email (vérifie ta boîte mail).';
+  if (msg.includes('Email not confirmed')) return 'Email ou mot de passe incorrect.';
   if (msg.includes('already registered')) return 'Ce compte existe déjà. Connecte-toi !';
   if (msg.includes('Password'))           return 'Mot de passe trop court (8 caractères minimum).';
   return msg;
 }
 
-// ─── Auth state listener ──────────────────────────────────
+// ─── Auth helpers ─────────────────────────────────────────
+function showApp(user) {
+  currentUser = user;
+  document.getElementById('userEmail').textContent = user.email;
+  document.getElementById('authScreen').style.display = 'none';
+  document.getElementById('appScreen').classList.add('visible');
+}
+function showAuth() {
+  currentUser = null;
+  document.getElementById('authScreen').style.display = 'flex';
+  document.getElementById('appScreen').classList.remove('visible');
+  tasks = [];
+  renderAll();
+}
+
+// ─── Session init au chargement ───────────────────────────
+// getSession() attend que le client soit prêt avant de retourner la session,
+// contrairement à INITIAL_SESSION qui peut s'émettre trop tôt pour les requêtes REST.
+let _loadingTasks = false;
+async function startApp(user) {
+  showApp(user);
+  if (_loadingTasks) return;
+  _loadingTasks = true;
+  await loadTasks();
+  await migrateLocalStorage();
+  _loadingTasks = false;
+}
+
+sb.auth.getSession().then(({ data: { session } }) => {
+  if (session?.user) startApp(session.user);
+  else showAuth();
+});
+
+// ─── Changements d'auth ultérieurs ────────────────────────
 sb.auth.onAuthStateChange(async (event, session) => {
-  if (session?.user) {
-    currentUser = session.user;
-    document.getElementById('userEmail').textContent = currentUser.email;
-    document.getElementById('authScreen').style.display = 'none';
-    document.getElementById('appScreen').classList.add('visible');
-    await loadTasks();
-    // migrate localStorage tasks on first login
-    await migrateLocalStorage();
-  } else {
-    currentUser = null;
-    document.getElementById('authScreen').style.display = 'flex';
-    document.getElementById('appScreen').classList.remove('visible');
-    tasks = [];
-    renderAll();
+  if (event === 'SIGNED_IN' && session?.user) {
+    _loadingTasks = false; // reset pour forcer un rechargement
+    startApp(session.user);
+  } else if (event === 'SIGNED_OUT') {
+    _loadingTasks = false;
+    showAuth();
   }
+  // INITIAL_SESSION, TOKEN_REFRESHED → ignorés (getSession() gère le démarrage)
 });
 
 // ═══════════════════════════════════════════════════════════
@@ -726,7 +751,7 @@ async function loadTasks() {
     .select('*')
     .order('created_at', { ascending: true });
 
-  if (error) { setSyncDot('error'); showToast('Erreur de chargement : ' + error.message); return; }
+  if (error) { setSyncDot('error'); showToast('Erreur de chargement : ' + error.message); renderAll(); return; }
 
   tasks = (data || []).map(dbToLocal);
   setSyncDot('ok');
@@ -757,7 +782,7 @@ async function deleteTaskDb(id) {
 
 function localToDb(t) {
   return {
-    id:         t.id.startsWith('task_') ? undefined : t.id,
+    id:         t.id.startsWith('task_') ? crypto.randomUUID() : t.id,
     user_id:    currentUser.id,
     title:      t.title,
     body:       t.body,
